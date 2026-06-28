@@ -47,7 +47,10 @@ from engine.job import ExtractionJob
 from engine.queue import JobQueue, QueuedJob
 
 # ---------- Settings ----------
-SETTINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "ofac_settings.json")
+SETTINGS_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "ofac_settings.json"
+)
 
 def load_settings():
     if os.path.exists(SETTINGS_FILE):
