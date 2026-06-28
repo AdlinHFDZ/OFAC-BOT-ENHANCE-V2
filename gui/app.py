@@ -12,6 +12,7 @@ Preview pane now supports switching between Excel sheets.
 Drag‑and‑drop files into the file list to add them to the watch folder.
 Confirmation before closing while a job is running.
 Open Output Folder button for quick access to results.
+Safe defaults – empty paths prevent crashes on inaccessible drives.
 """
 
 import sys, os
@@ -238,6 +239,7 @@ class MappingPopup:
     def cancel(self):
         self.window.destroy()
 
+
 # ==================== MAIN APP ====================
 class OFACScannerApp:
     def __init__(self, root):
@@ -256,10 +258,11 @@ class OFACScannerApp:
         except:
             pass
 
+        # Paths – empty by default to avoid startup crashes
         self.watch_folder = self.settings.get("folder", "")
         self.password_csv_path = self.settings.get("csv", "")
-        self.output_folder = self.settings.get("output_folder", os.path.expanduser("~\\OFAC_Output"))
-        self.header_folder = self.settings.get("header_folder", os.path.join(self.output_folder, "header"))
+        self.output_folder = self.settings.get("output_folder", "")
+        self.header_folder = self.settings.get("header_folder", "")
         set_header_path(self.header_folder)
 
         self.mapping_data = {}
@@ -443,31 +446,35 @@ class OFACScannerApp:
     # ==================== DATA LOADING ====================
     def load_company_data(self):
         self.company_data = []
-        if not os.path.exists(self.password_csv_path):
+        if not self.password_csv_path or not os.path.exists(self.password_csv_path):
             return
-        with open(self.password_csv_path, 'r', newline='', encoding='utf-8-sig') as f:
-            sample = f.read(8192)
-            f.seek(0)
-            has_header = csv.Sniffer().has_header(sample)
-            if has_header:
-                reader = csv.DictReader(f)
-                if reader.fieldnames:
-                    code_key = next((k for k in reader.fieldnames if k.lower() == 'code'), None)
-                    pwd_key = next((k for k in reader.fieldnames if k.lower() == 'password'), None)
-                    if code_key and pwd_key:
-                        for row in reader:
-                            self.company_data.append({'Code': row[code_key].strip(), 'Password': row[pwd_key].strip()})
-                    else:
-                        f.seek(0)
-                        next(reader, None)
-                        for row in reader:
-                            if len(row) >= 2:
-                                self.company_data.append({'Code': row[0].strip(), 'Password': row[1].strip()})
-            else:
-                reader = csv.reader(f)
-                for row in reader:
-                    if len(row) >= 2:
-                        self.company_data.append({'Code': row[0].strip(), 'Password': row[1].strip()})
+        try:
+            with open(self.password_csv_path, 'r', newline='', encoding='utf-8-sig') as f:
+                sample = f.read(8192)
+                f.seek(0)
+                has_header = csv.Sniffer().has_header(sample)
+                if has_header:
+                    reader = csv.DictReader(f)
+                    if reader.fieldnames:
+                        code_key = next((k for k in reader.fieldnames if k.lower() == 'code'), None)
+                        pwd_key = next((k for k in reader.fieldnames if k.lower() == 'password'), None)
+                        if code_key and pwd_key:
+                            for row in reader:
+                                self.company_data.append({'Code': row[code_key].strip(), 'Password': row[pwd_key].strip()})
+                        else:
+                            f.seek(0)
+                            next(reader, None)
+                            for row in reader:
+                                if len(row) >= 2:
+                                    self.company_data.append({'Code': row[0].strip(), 'Password': row[1].strip()})
+                else:
+                    reader = csv.reader(f)
+                    for row in reader:
+                        if len(row) >= 2:
+                            self.company_data.append({'Code': row[0].strip(), 'Password': row[1].strip()})
+        except Exception as e:
+            self.status_var.set(f"Cannot load password CSV: {e}")
+            return
 
         codes = sorted({d['Code'] for d in self.company_data})
         self.company_combo.values = codes
@@ -532,9 +539,12 @@ class OFACScannerApp:
             pwd = entry.get().strip()
             if pwd:
                 self.company_data.append({'Code': code, 'Password': pwd})
-                with open(self.password_csv_path, 'a', newline='', encoding='utf-8') as f:
-                    writer = csv.DictWriter(f, fieldnames=['Code', 'Password'])
-                    writer.writerow({'Code': code, 'Password': pwd})
+                try:
+                    with open(self.password_csv_path, 'a', newline='', encoding='utf-8') as f:
+                        writer = csv.DictWriter(f, fieldnames=['Code', 'Password'])
+                        writer.writerow({'Code': code, 'Password': pwd})
+                except Exception as e:
+                    messagebox.showerror("Error", f"Could not write to password file: {e}")
                 self.refresh_password_list()
                 dialog.destroy()
         tb.Button(dialog, text="Save", command=save, bootstyle="success").pack(pady=10)
@@ -550,8 +560,14 @@ class OFACScannerApp:
             widget.destroy()
         self.file_vars.clear()
 
+        try:
+            items = os.listdir(self.watch_folder)
+        except Exception as e:
+            self.log(f"Cannot read watch folder: {e}")
+            return
+
         files = []
-        for f in os.listdir(self.watch_folder):
+        for f in items:
             full = os.path.join(self.watch_folder, f)
             if os.path.isfile(full) and not f.endswith('.json'):
                 ext = f.split('.')[-1].lower()
@@ -757,7 +773,10 @@ class OFACScannerApp:
         if not os.path.exists(path):
             messagebox.showinfo("Folder not found", f"The folder does not exist yet:\n{path}")
             return
-        os.startfile(path)
+        try:
+            os.startfile(path)
+        except Exception as e:
+            messagebox.showerror("Error", f"Cannot open folder:\n{e}")
 
     # ==================== AUTO‑REFRESH LOOP ====================
     def _auto_refresh_loop(self):
@@ -1179,8 +1198,14 @@ class OFACScannerApp:
             widget.destroy()
         self.ext_file_vars.clear()
 
+        try:
+            items = os.listdir(self.watch_folder)
+        except Exception as e:
+            self.ext_log(f"Cannot read watch folder: {e}")
+            return
+
         files = []
-        for f in os.listdir(self.watch_folder):
+        for f in items:
             full = os.path.join(self.watch_folder, f)
             if os.path.isfile(full) and not f.endswith('.json'):
                 ext = f.split('.')[-1].lower()
@@ -1440,9 +1465,13 @@ class OFACScannerApp:
         for item in self.history_tree.get_children():
             self.history_tree.delete(item)
         output_root = self.output_folder
-        if not os.path.exists(output_root):
+        if not output_root or not os.path.exists(output_root):
             return
-        for folder in os.listdir(output_root):
+        try:
+            items = os.listdir(output_root)
+        except Exception:
+            return
+        for folder in items:
             folder_path = os.path.join(output_root, folder)
             if os.path.isdir(folder_path):
                 log_file = os.path.join(folder_path, f"Log_{folder}.csv")
