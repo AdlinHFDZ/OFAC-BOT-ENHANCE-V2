@@ -1,0 +1,10 @@
+ttkbootstrap>=1.10.0
+polars>=0.18.0
+msoffcrypto-tool>=5.0.0
+python-dateutil>=2.8.0
+nameparser>=1.1.0
+chardet>=5.0.0
+clevercsv>=0.7.0
+tkinterdnd2>=0.3.0
+
+
