@@ -13,6 +13,7 @@ Drag‑and‑drop files into the file list to add them to the watch folder.
 Confirmation before closing while a job is running.
 Open Output Folder button for quick access to results.
 Safe defaults – empty paths prevent crashes on inaccessible drives.
+Background loading of company data – never freezes on slow files.
 """
 
 import sys, os
@@ -446,39 +447,61 @@ class OFACScannerApp:
 
         return frame
 
-    # ==================== DATA LOADING ====================
+    # ==================== DATA LOADING (background thread) ====================
     def load_company_data(self):
-        self.company_data = []
-        if not self.password_csv_path or not os.path.exists(self.password_csv_path):
-            return
-        try:
-            with open(self.password_csv_path, 'r', newline='', encoding='utf-8-sig') as f:
-                sample = f.read(8192)
-                f.seek(0)
-                has_header = csv.Sniffer().has_header(sample)
-                if has_header:
-                    reader = csv.DictReader(f)
-                    if reader.fieldnames:
-                        code_key = next((k for k in reader.fieldnames if k.lower() == 'code'), None)
-                        pwd_key = next((k for k in reader.fieldnames if k.lower() == 'password'), None)
-                        if code_key and pwd_key:
-                            for row in reader:
-                                self.company_data.append({'Code': row[code_key].strip(), 'Password': row[pwd_key].strip()})
-                        else:
-                            f.seek(0)
-                            next(reader, None)
-                            for row in reader:
-                                if len(row) >= 2:
-                                    self.company_data.append({'Code': row[0].strip(), 'Password': row[1].strip()})
-                else:
-                    reader = csv.reader(f)
-                    for row in reader:
-                        if len(row) >= 2:
-                            self.company_data.append({'Code': row[0].strip(), 'Password': row[1].strip()})
-        except Exception as e:
-            self.status_var.set(f"Cannot load password CSV: {e}")
+        """Load company codes and passwords in a background thread."""
+        if not self.password_csv_path:
             return
 
+        self.status_var.set("Loading company data...")
+
+        def worker():
+            data = []
+            error_msg = None
+            if not os.path.isfile(self.password_csv_path):
+                error_msg = "Password CSV file not found"
+            elif not os.access(self.password_csv_path, os.R_OK):
+                error_msg = "Password CSV file not readable"
+            else:
+                try:
+                    with open(self.password_csv_path, 'r', newline='', encoding='utf-8-sig') as f:
+                        sample = f.read(8192)
+                        f.seek(0)
+                        has_header = csv.Sniffer().has_header(sample)
+                        if has_header:
+                            reader = csv.DictReader(f)
+                            if reader.fieldnames:
+                                code_key = next((k for k in reader.fieldnames if k.lower() == 'code'), None)
+                                pwd_key = next((k for k in reader.fieldnames if k.lower() == 'password'), None)
+                                if code_key and pwd_key:
+                                    for row in reader:
+                                        data.append({'Code': row[code_key].strip(), 'Password': row[pwd_key].strip()})
+                                else:
+                                    f.seek(0)
+                                    next(reader, None)
+                                    for row in reader:
+                                        if len(row) >= 2:
+                                            data.append({'Code': row[0].strip(), 'Password': row[1].strip()})
+                        else:
+                            reader = csv.reader(f)
+                            for row in reader:
+                                if len(row) >= 2:
+                                    data.append({'Code': row[0].strip(), 'Password': row[1].strip()})
+                except Exception as e:
+                    error_msg = f"Cannot load password CSV: {e}"
+
+            # Schedule UI update on main thread
+            self.root.after(0, self._on_company_data_loaded, data, error_msg)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_company_data_loaded(self, data, error_msg):
+        """Called on the main thread after background loading completes."""
+        if error_msg:
+            self.status_var.set(error_msg)
+            return
+
+        self.company_data = data
         codes = sorted({d['Code'] for d in self.company_data})
         self.company_combo.values = codes
         self.company_combo.entry_var.set("")
@@ -489,6 +512,7 @@ class OFACScannerApp:
             self.on_company_selected()
 
         self.ext_populate_company_combo()
+        self.status_var.set("Ready")
 
     def on_company_selected(self, event=None):
         self.refresh_password_list()
